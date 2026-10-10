@@ -1,0 +1,422 @@
+\documentclass[10pt,a4paper,twocolumn]{article}
+
+\usepackage[top=0.9in,bottom=0.9in,left=0.75in,right=0.75in,columnsep=0.3in]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage{mathptmx}          % Times-style text and math
+\usepackage{microtype}
+\usepackage{titlesec}
+\usepackage{xcolor}
+\usepackage{booktabs}
+\usepackage{float}
+\raggedbottom
+\widowpenalty=10000
+\clubpenalty=10000
+\displaywidowpenalty=10000
+\usepackage{longtable}
+\usepackage{tabularx}
+\usepackage{array}
+\usepackage{graphicx}
+\usepackage{enumitem}
+\usepackage{caption}
+\usepackage[hidelinks,pdftitle={Predicting pCR from pre-treatment breast biopsy slides with an open pathology foundation model}]{hyperref}
+
+% Journal-style numbered headings
+\titleformat{\section}{\normalfont\large\bfseries}{\thesection.}{0.6em}{}
+\titleformat{\subsection}{\normalfont\normalsize\bfseries\itshape}{\thesubsection}{0.6em}{}
+\titlespacing*{\section}{0pt}{1.1em}{0.4em}
+\titlespacing*{\subsection}{0pt}{0.8em}{0.3em}
+\captionsetup{font=small,labelfont=bf,labelsep=period}
+\setlength{\parindent}{1em}
+\setlength{\parskip}{0pt}
+\setlength{\emergencystretch}{2em}
+\setlength{\textfloatsep}{8pt plus 2pt minus 2pt}
+\setlength{\floatsep}{8pt plus 2pt minus 2pt}
+\setlength{\intextsep}{8pt plus 2pt minus 2pt}
+\setlength{\abovecaptionskip}{5pt}
+\setlength{\belowcaptionskip}{0pt}
+
+% Red markers for anything still to be filled in or verified. Search for "todo" to find them all.
+\newcommand{\todo}[1]{\textcolor{red}{[#1]}}
+
+% Placeholder box for a figure; uses the image instead when the file exists.
+\newcommand{\figplaceholder}[1]{%
+  \fbox{\parbox[c][4.5cm][c]{0.92\linewidth}{\centering\textcolor{gray}{#1}}}}
+\newcommand{\figorplaceholder}[3]{\IfFileExists{#1}{\includegraphics[width=#2]{#1}}{\figplaceholder{#3}}}
+
+\begin{document}
+
+\twocolumn[{%
+\begin{center}
+{\LARGE\bfseries Predicting pathological complete response from pre-treatment breast biopsy slides with an open pathology foundation model\par}
+\vspace{1em}
+{\large Vincent Luong, Daegan Sit, Muse Park, April Lee, Graham Greene, Joseph Lenczoski, Vanessa Yang\par}
+\vspace{0.3em}
+{\small Team 1, T-CAIREM's 2026 National Health Datathon\par}
+\vspace{0.3em}
+{\small October 3, 2026\par}
+\vspace{1em}
+\begin{minipage}{0.9\textwidth}
+\small
+\setlength{\parindent}{0pt}\setlength{\parskip}{0.4em}
+\centerline{\textbf{Abstract}}
+\vspace{0.2em}
+\textbf{Background.} Response to neoadjuvant chemotherapy in breast cancer is known only at surgery, roughly six months after diagnosis, yet it shapes adjuvant treatment and long-term prognosis. Computational models that read the diagnostic biopsy slide could move that estimate to the time of diagnosis. Published approaches depend on manual tissue delineation, networks pre-trained on natural images, or access-restricted pathology foundation models trained on hundreds of patients.
+
+\textbf{Methods.} We studied 106 patients with a digitised pre-treatment core biopsy and a recorded pathological outcome from a single institution (T-CAIREM dataset), of whom 89 formed the development set used for evaluation. Each whole-slide image was cropped to tissue and embedded with Phikon, an openly available pathology foundation model pre-trained on 40 million H\&E tiles from The Cancer Genome Atlas, yielding a 768-dimensional slide representation. Five principal components of this embedding were combined with molecular subtype, chemotherapy regimen, Nottingham grade and clinical tumour size in multinomial logistic regression models predicting residual cancer burden (RCB) class, from which discrimination of pathological complete response (pCR; RCB 0 versus RCB I--III) was derived. Discrimination was measured by the area under the receiver operating characteristic curve (AUC) using ten repeats of stratified five-fold cross-validation on the development set. Feature contributions were examined with SHAP.
+
+\textbf{Results.} Image features alone predicted pCR with an AUC of 0.704. Clinical variables alone reached 0.856 and molecular subtype alone 0.858. Combining subtype with image features gave the highest discrimination (AUC 0.882, 95\% CI 0.80 to 0.95, a gain of 0.024 over subtype alone), and clinical variables plus image features reached 0.862 (a gain of 0.006 over clinical variables alone). All values are cross-validated estimates on 89 patients, and the confidence intervals of the models overlap substantially; the paired 95\% confidence interval for the gain from adding images to subtype was $-0.027$ to $0.077$. In SHAP analysis, three image components ranked directly after the two most influential subtype indicators.
+
+\textbf{Conclusions.} A frozen, openly available pathology foundation model, used without any manual annotation, extracts response-related signal from routine pre-treatment biopsies, with a small and uncertain gain in discrimination over molecular subtype. The compact pipeline suits single-centre cohorts and is fully reproducible from public weights. External validation is required.
+
+\textbf{Keywords:} breast cancer; neoadjuvant chemotherapy; pathological complete response; residual cancer burden; computational pathology; foundation model; Phikon
+\end{minipage}
+\end{center}
+\vspace{0.8em}
+}]
+
+%------------------------------------------------------------------
+\section{Introduction}
+
+Neoadjuvant chemotherapy is standard for locally advanced and high-risk early breast cancer, and its effect is judged only at surgery. Patients typically receive eight cycles of anthracycline- and taxane-based chemotherapy every two weeks, or six cycles every three weeks, before resection, after which pathological response is graded on the specimen, most often as pathological complete response (pCR) or by the residual cancer burden (RCB) index.
+
+That grade matters to patients beyond the operating room. In a pooled analysis of 5161 patients from 12 cohorts, RCB was prognostic for long-term survival regardless of pre-treatment clinicopathological features and of hormone receptor and HER2 subtype \cite{yau2022}. At the trial level pCR is a weak surrogate for long-term outcome, but it remains the accepted way to estimate an individual patient's residual risk and to select candidates for further adjuvant therapy \cite{conforti2021}. Residual disease after neoadjuvant treatment now triggers escalation: trastuzumab emtansine for residual HER2-positive disease \cite{vonminckwitz2019} and capecitabine for residual HER2-negative disease \cite{masuda2017}.
+
+A reliable estimate of response at the time of diagnosis would let clinicians and patients plan with that information months earlier. Tissue biomarkers already carry part of the signal. Tumour-infiltrating lymphocytes predict response in triple-negative and HER2-positive disease \cite{li2022til}, a low tumour--stroma ratio in the pre-treatment biopsy is associated with higher pCR rates in HER2-negative disease \cite{hagenaars2021}, and the Ki-67 labelling index is associated with pCR \cite{tao2017}. Each of these is a single, hand-defined feature scored by a pathologist or a dedicated algorithm.
+
+Computational pathology offers a way to read the whole biopsy slide at once. Systematic reviews report that deep-learning models can discriminate pCR well in retrospective cohorts, but heterogeneous methods and scarce external validation limit their clinical use \cite{krasniqi2025,carlini2026}. The published H\&E-based models fall into four broad approaches: segmentation of pre-defined tissue features \cite{dodington2021,saednia2022,huang2023,aswolinskiy2023,cui2026}, convolutional networks pre-trained on natural images \cite{li2021,li2022,zeng2024,sturm2025}, small self-supervised or hybrid encoders \cite{valderrama2026,lin2026}, and, most recently, large pathology foundation models combined with multiple-instance learning \cite{khan2025,hou2026,zhou2026}. All three foundation-model studies used the UNI family of encoders, which require an access request and were trained on cohorts of 174 to 950 patients.
+
+Two practical gaps remain. Many centres hold only one or two hundred annotated neoadjuvant cases, too few to train attention-based models with many parameters. And reproducibility is constrained when the encoder is gated or was pre-trained on non-public data. Open pathology foundation models pre-trained solely on public data, such as Phikon \cite{filiot2023}, have not, to our knowledge, been evaluated for neoadjuvant response prediction.
+
+We therefore asked whether a frozen, openly available pathology foundation model, applied to the routine pre-treatment biopsy without any manual annotation, can predict pCR in a single-centre cohort, and whether its image features add to molecular subtype and routine clinical variables.
+
+%------------------------------------------------------------------
+\section{Methods}
+
+\subsection{Study population}
+We used the T-CAIREM breast cancer digital pathology dataset (Health Data Nexus, version 1.0.0, DOI 10.57764/pm3v-b131) \cite{tran2025}, a single-institution cohort of 157 patients with high-risk breast cancer treated with neoadjuvant systemic therapy between 2013 and 2018 (per the dataset documentation) at a single Canadian institution. The master data sheet records diagnosis years from 2000 to 2021, with 107 of the 144 recorded years (74\%) falling between 2013 and 2018, so a minority of patients lie outside the documented period. The source cohort comprised adults with biopsy-confirmed, unifocal, unilateral, non-metastatic breast cancer who completed anthracycline- and taxane-based neoadjuvant therapy; the dataset curators excluded patients with progressive disease requiring salvage therapy, incomplete clinicopathological data, non-standard or trial regimens, or incomplete or non-compliant treatment. For the present analysis we required a digitised pre-treatment core needle biopsy stained with haematoxylin and eosin (H\&E) and a recorded pathological outcome. A total of 106 of the 157 patients met these criteria: 51 were excluded because no usable RCB value was recorded (the entry read ``Not reported'' or ``RCB does not apply''). Of the 106 labelled patients, 89 formed a development set and 17 a held-out set, split at the patient level and stratified on RCB class; all results reported here come from the development set. Each patient contributed one pre-treatment whole-slide image (WSI).
+
+\subsection{Outcome}
+The primary outcome was pCR, defined as RCB 0 on the surgical specimen. Patients with RCB I, II or III were classed as not achieving pCR. In the analysed cohort, 30 of 106 patients (28.3\%) achieved pCR.
+
+\subsection{Clinical variables}
+Four routinely available variables were used: molecular subtype (triple-negative, HER2-enriched, luminal A, luminal B), chemotherapy regimen (dose-dense doxorubicin, cyclophosphamide and paclitaxel [ddAC-T], or fluorouracil, epirubicin, cyclophosphamide and docetaxel [FEC-D]), Nottingham histological grade, and clinical tumour size (cT, mm). Regimen was recorded as free text and grouped into anthracycline--cyclophosphamide followed by paclitaxel (ddAC-T family, $n = 57$) and FEC followed by docetaxel or another sequence ($n = 49$). A small number of patients ($<10$) received other sequences (AC followed by docetaxel, or FEC-D followed by ddAC-T); in the cleaned regimen variable a sequence containing FEC-D was coded as FEC-D, and a sequence that fitted neither family was left without a family. Twenty-nine regimens included trastuzumab. Subtype was parsed from the image file names and one-hot encoded (four indicators), regimen one-hot encoded (two indicators), grade as a numeric variable and tumour size (cT) log-transformed, giving eight encoded model inputs. Apart from the patients without a regimen family ($<10$), no patient had a missing value for any of the four predictors; the missing regimen was handled during preprocessing by imputing the most frequent category within each training fold, and missing numeric values were imputed with the training-fold median. Subtype classes corresponded exactly to receptor status in the master sheet: luminal A (ER-positive, HER2-negative, $n = 36$), luminal B (ER-positive, HER2-positive, $n = 21$), HER2-enriched (ER-negative, HER2-positive, $n = 10$) and triple-negative ($n = 39$). Grade was coded 1 to 3 and entered as a single numeric variable.
+
+\subsection{Leakage prevention}
+To ensure that every predictor was available at the time of the diagnostic biopsy, we excluded all variables recorded after neoadjuvant therapy began or that depend on its outcome. Surgery type, adjuvant radiation, adjuvant systemic therapy and survival information were excluded as post-treatment variables: the choice between breast-conserving surgery and mastectomy is influenced by tumour response, adjuvant plans depend on surgical pathology and residual disease, and survival is strongly associated with pCR. A recorded neoadjuvant response field (complete versus partial) was excluded as a predictor because it is a consequence of chemotherapy and closely tied to the outcome. It was also not used as the label, because it is not defined in the dataset documentation. Among the 106 patients with an RCB-based label it agreed closely with pCR: all 26 patients recorded as complete response had pCR, and fewer than 10 of the 80 recorded as partial response also had pCR. The 51 excluded patients differed: the large majority were recorded as complete responders. Given the agreement above, many excluded patients were probably pathological complete responders whose RCB was not reported, so the analysed cohort is likely to under-represent pCR (Limitations). Lymphovascular invasion was excluded as a precaution, because the documentation does not state whether it was scored on the diagnostic biopsy or on the surgical specimen.
+
+\subsection{Slide processing and feature extraction}
+Slides were 4~$\mu$m formalin-fixed, paraffin-embedded sections from 14-gauge needle core biopsies, H\&E stained and scanned on a Huron Digital Pathology scanner at 40$\times$ (0.2~$\mu$m per pixel), with each WSI approximately $60{,}000 \times 18{,}000$ pixels \cite{tran2025}. Per the dataset documentation, images were de-identified, including reconstruction to isolate the tumour cores. Most patients contributed a single core image and a small number ($<10$) contributed two; images were colour-calibrated to normalise stain variation \cite{tran2026keynote}. Tissue was detected on a thumbnail of about 2048 pixels by Otsu thresholding of the HSV saturation channel, with the threshold capped at a saturation of 0.15 where Otsu's method returned a higher value (61 of 157 slides, in which the uncapped mask retained only the darkest-staining regions), followed by removal of small objects and holes. Each slide was divided into fixed-scale square tiles covering 112~$\mu$m (224 pixels at 0.5~$\mu$m per pixel, equivalent to 20$\times$; regions of 560 pixels at the native 0.2~$\mu$m per pixel were resized to 224), and a tile was kept if at least 50\% of its area overlapped the tissue mask. Tile coordinates were stored and tiles were re-read from the slide at embedding time. Per-tile quality metrics (blur by the variance of the Laplacian, saturation and mean colour) were recorded for each tile. Before pooling, tiles were removed if they were among the blurriest 5\% of tiles, the lowest 2\% by saturation, or outside the 0.5th to 99.5th percentile of mean red or mean blue, with the percentiles taken over tiles from the training patients of the 70/15/15 patient-level split rather than recomputed within each cross-validation fold (a slide with fewer than 100 remaining tiles kept all of its tiles; no labels were used). Image features were extracted with Phikon, a ViT-Base vision transformer (86 million parameters) pre-trained by self-supervision (iBOT) on 40 million pan-cancer tiles from The Cancer Genome Atlas \cite{filiot2023}. Phikon was used frozen, with no fine-tuning on study data, and produced a 768-dimensional representation per patient by mean pooling the embeddings of up to 500 tiles, pooled across all cores on the slide. Where a slide had more than 500 candidate tiles, 500 were drawn uniformly at random without replacement, with a fixed seed per patient. The median number of candidate tiles per slide was 2,845 (interquartile range 1,868 to 3,935).
+
+Phikon was chosen because its weights are openly downloadable without an access request, it was pre-trained exclusively on public data, and its compact embedding suits a small cohort. To limit overfitting, the 768-dimensional slide embeddings were reduced by principal component analysis (PCA) to five components; standardisation and PCA (with whitening) were fitted within each training fold.
+
+\subsection{Model development}
+We fitted multinomial logistic regression models, predicting the four-class RCB outcome (RCB 0, I, II or III), with five input sets: (i) image components only; (ii) clinical variables only; (iii) molecular subtype only; (iv) clinical variables plus image components; and (v) molecular subtype plus image components. The fullest model therefore had at most 13 encoded inputs for 89 development patients. Logistic regression was preferred over attention-based multiple-instance learning because it has few parameters and its coefficients can be inspected directly. Models were L2-regularised with a fixed inverse regularisation strength of $C = 0.5$ for all models, which was not tuned; luminal A has no pCR events, so an unpenalised fit would be degenerate. The logistic regression used for the SHAP analysis chose its own $C$ by internal cross-validation, which gave $C = 0.1$.
+
+\begin{figure*}[t]
+\centering
+\figorplaceholder{figures/fig1_pipeline.png}{0.95\textwidth}{Figure 1: study pipeline diagram (insert image file)}
+\caption{Study pipeline. The pre-treatment whole-slide image (WSI) is cropped to tissue and embedded by the Phikon foundation model into 768 features, reduced by PCA to five components (x1--x5). These are combined with clinical variables (x6--x13: subtype, chemotherapy regimen, Nottingham grade, clinical tumour size) in a logistic regression predicting pCR (RCB 0 vs RCB I--III).}
+\end{figure*}
+
+\subsection{Evaluation}
+Discrimination of pCR was measured by the area under the receiver operating characteristic curve (AUC) of the predicted probability of RCB 0 against RCB I--III. The 106 labelled patients were split at the patient level into a development set of 89 patients and a held-out set of 17, stratified on RCB class. All model fitting and evaluation used the development set, with ten repeats of stratified five-fold cross-validation; within each repeat, out-of-fold predictions were pooled across patients to compute the AUC, and the reported AUC is the mean over repeats. All preprocessing steps (imputation, encoding, scaling and PCA) were fitted inside each training fold. The 95\% confidence interval of each AUC is a percentile interval from 500 bootstrap resamples of patients, with the repeat-averaged AUC recomputed on every resample. Differences between models are percentile intervals of the paired difference in AUC on the same resamples. All models were evaluated on the same patients and the same splits.
+
+\subsection{Interpretability}
+Feature contributions were estimated with SHAP (Shapley additive explanations) \cite{lundberg2017} for the subtype-plus-image model, giving the direction and size of each feature's effect on the predicted probability of pCR (the probability of RCB 0) for every patient. SHAP values were computed on out-of-fold predictions, on the same patients as the cross-validated models.
+
+\subsection{Literature comparison}
+To place the approach in context, we reviewed 14 published studies that predict neoadjuvant response from H\&E slides \cite{dodington2021,saednia2022,huang2023,aswolinskiy2023,cui2026,li2021,li2022,zeng2024,sturm2025,valderrama2026,lin2026,khan2025,hou2026,zhou2026}. For each we extracted the cohort, endpoint, image representation and reported AUC from the full text, and grouped the studies by how they read the slide.
+
+\subsection{Reporting}
+The study is reported following TRIPOD+AI \cite{collins2024}; the completed checklist is given in Supplementary Table S1, with the items that are not yet addressed marked.
+
+%------------------------------------------------------------------
+\section{Results}
+
+\subsection{Cohort}
+Patient flow is shown in Figure~\ref{fig:flow}. The cohort comprised 106 patients across all four molecular subtypes (Table~\ref{tab:cohort}). pCR rates differed sharply by subtype: about two thirds of the 39 triple-negative patients achieved pCR, against fewer than 10 events in each of the HER2-enriched ($n = 10$), luminal B ($n = 21$) and luminal A ($n = 36$) groups.
+
+\begin{figure}[H]
+\centering
+\figorplaceholder{figures/fig_flow.png}{0.95\linewidth}{Patient flow diagram (insert image file)}
+\caption{Patient flow. Of 157 patients in the dataset, 51 had no usable RCB value and were excluded. The 106 patients with a recorded RCB class were split at the patient level, stratified on RCB class, into a development set of 89 (used for all results reported here) and a held-out set of 17.}
+\label{fig:flow}
+\end{figure}
+
+\begin{table}[t]
+\centering
+\small
+\setlength{\tabcolsep}{4pt}
+\caption{Cohort characteristics ($n = 106$).}
+\label{tab:cohort}
+\begin{tabular}{@{}lc@{}}
+\toprule
+Characteristic & Value \\
+\midrule
+Age, years, median (IQR) & 51.0 (44.2--57.0) \\
+Clinical tumour size, mm, median (IQR) & 38.0 (27.2--64.0) \\
+Molecular subtype, $n$ (\%) & \\
+\quad Luminal A & 36 (34.0\%) \\
+\quad Luminal B & 21 (19.8\%) \\
+\quad HER2-enriched & 10 (9.4\%) \\
+\quad Triple-negative & 39 (36.8\%) \\
+Nottingham grade, $n$ (\%) & \\
+\quad 1 or 2 & 45 (42.5\%) \\
+\quad 3 & 61 (57.5\%) \\
+Regimen, $n$ (\%) & \\
+\quad AC--paclitaxel (ddAC-T) & 57 (53.8\%) \\
+\quad FEC--docetaxel or other sequence & 49 (46.2\%) \\
+pCR, $n$ (\%) & 30 (28.3\%) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Model performance}
+Combining molecular subtype with image features gave the best discrimination, with an AUC of 0.882 (Table~\ref{tab:auc}, Figure~\ref{fig:roc}). Image features alone reached 0.704, showing that the biopsy slide carries response-related signal on its own. Adding image features to subtype raised the AUC from 0.858 to 0.882; adding them to the full clinical set raised it from 0.856 to 0.862. These gains are small relative to the width of the intervals, so the data do not establish that image features improve on subtype alone: the paired 95\% confidence interval of the gain was $-0.027$ to $0.077$ for subtype and $-0.031$ to $0.045$ for the full clinical set.
+
+\begin{table}[t]
+\centering
+\small
+\setlength{\tabcolsep}{3pt}
+\caption{Discrimination of pCR by model inputs ($n = 89$ development patients). $n_{\mathrm{in}}$: encoded input variables. $^{a}$Change in AUC from adding image components to the same model.}
+\label{tab:auc}
+\begin{tabular}{@{}lcccc@{}}
+\toprule
+Model inputs & $n_{\mathrm{in}}$ & AUC & 95\% CI & Gain$^{a}$ \\
+\midrule
+Image components only & 5 & 0.704 & 0.58--0.82 & n/a \\
+Clinical variables only & 8 & 0.856 & 0.77--0.93 & n/a \\
+Molecular subtype only & 4 & 0.858 & 0.79--0.92 & n/a \\
+Clinical variables + image & 13 & 0.862 & 0.77--0.93 & +0.006 \\
+Molecular subtype + image & 9 & \textbf{0.882} & 0.80--0.95 & +0.024 \\
+\bottomrule
+\end{tabular}
+
+\smallskip
+The confidence intervals of the models overlap substantially. Intervals are percentile intervals from a patient-level bootstrap with 500 resamples. The paired gain from adding image components was $+0.006$ (95\% CI $-0.031$ to $0.045$) for clinical variables and $+0.024$ (95\% CI $-0.027$ to $0.077$) for molecular subtype; both intervals include zero.
+\end{table}
+
+\begin{figure}[t]
+\centering
+\figorplaceholder{figures/fig2_roc.png}{\linewidth}{Figure 2: ROC curves (insert image file)}
+\caption{Receiver operating characteristic curves for the five models on the same 89 development patients. Curves show the mean over ten cross-validation repeats and shaded bands the range across repeats. The dashed line marks chance.}
+\label{fig:roc}
+\end{figure}
+
+\subsection{Feature contributions}
+In the subtype-plus-image model, the two most influential features were subtype indicators: triple-negative subtype raised the predicted probability of pCR and luminal A lowered it, consistent with clinical experience (Figure~\ref{fig:shap}). Three image components (PC5, PC2 and PC3) ranked next, above the luminal B and HER2 indicators. High values of PC5 and PC3 pushed predictions toward pCR, and high values of PC2 pushed them away. PC4 and PC1 contributed little.
+
+\begin{figure}[t]
+\centering
+\figorplaceholder{figures/fig3_shap.png}{\linewidth}{Figure 3: SHAP summary plot (insert image file)}
+\caption{SHAP summary plot for the subtype-plus-image model (Phikon features), computed out of fold. The pCR probability is the model's probability of RCB 0. Each dot is one patient; position shows the feature's effect on the predicted probability of pCR and colour shows the feature value.}
+\label{fig:shap}
+\end{figure}
+
+%------------------------------------------------------------------
+\section{Discussion}
+
+\subsection{Principal findings}
+A frozen, openly available pathology foundation model, applied to the routine pre-treatment biopsy without any annotation, extracted features that predicted pCR on their own (AUC 0.704) and was associated with a higher AUC when added to molecular subtype (0.858 to 0.882), a gain that is small relative to the uncertainty of an 89-patient cohort. The image components did not simply restate subtype: molecular subtype explained 2\% to 20\% of the variance of each of the five components (7\%, 20\%, 4\%, 10\% and 2\% for components 1 to 5), and the two components that ranked highest in SHAP analysis after the subtype indicators, components 5 and 3, were almost independent of subtype (2\% and 4\%). Component 2, which also ranked among the top three, was the most subtype-related (20\%). Whether these components carry information about response beyond subtype could not be shown here, because the paired AUC gains were not distinguishable from zero. The whole pipeline used one public encoder, five image components and a logistic regression evaluated on 89 patients.
+
+\subsection{Comparison with prior approaches}
+Published H\&E-based models of neoadjuvant response fall into four groups (Table~\ref{tab:prior}). Reported AUCs are not directly comparable across studies, because cohorts, subtypes, endpoints and validation designs differ; they are given for context only.
+
+\begin{table*}[t]
+\centering
+\caption{Prior H\&E-based approaches to predicting neoadjuvant response, and how this study differs.}
+\label{tab:prior}
+\footnotesize
+\begin{tabularx}{\textwidth}{@{}p{2.2cm}p{3.3cm}X p{1.8cm} X@{}}
+\toprule
+Approach & Studies & What it requires & Reported AUC & This study \\
+\midrule
+A. Feature identification & Dodington 2021 \cite{dodington2021}, Saednia 2022 \cite{saednia2022}, Huang 2023 \cite{huang2023}, Aswolinskiy 2023 \cite{aswolinskiy2023}, Cui 2026 \cite{cui2026} & Segmentation of TILs, stroma, tumour bed or nuclei before measuring pre-defined features; IMPRESS also used paired IHC & 0.59--0.91 & No manual delineation: the whole biopsy is embedded automatically \\
+\addlinespace
+B. ImageNet-pretrained CNNs & Li 2021 \cite{li2021}, Li 2022 \cite{li2022}, Zeng 2024 \cite{zeng2024}, Sturm 2025 \cite{sturm2025} & Networks pre-trained on natural photographs, fine-tuned or used as feature extractors on 205 to 874 patients & 0.70--0.85 (image alone) & A pathology foundation model pre-trained on 40 million H\&E tiles, used frozen \\
+\addlinespace
+C. Small self-supervised or hybrid encoders & Valderrama 2026 \cite{valderrama2026}, Lin 2026 \cite{lin2026} & A small ViT (384 features) with narrow pre-training, fused with an ImageNet CNN, on 500 to 1,543 patients & 0.65--0.81 external & One open, pan-cancer encoder used alone \\
+\addlinespace
+D. Foundation model with MIL & Khan 2025 \cite{khan2025}, Hou 2026 \cite{hou2026}, Zhou 2026 \cite{zhou2026} & UNI or UNI-2 (gated access, CC BY-NC-ND licence) with attention-based MIL on 174 to 950 patients & 0.63--0.82 external & First use of Phikon; public-data encoder; 12-input model suited to a single-centre cohort \\
+\bottomrule
+\end{tabularx}
+\end{table*}
+
+\textbf{Against feature identification.} Methods in group A measure what investigators choose in advance, and each segmentation step adds annotation effort and error. Their performance also varied by subtype: IMPRESS reached 0.90 in HER2-positive disease but 0.59 in triple-negative disease on external validation \cite{huang2023}. Our pipeline requires no delineation, so it can capture stromal and immune context that no one pre-specified.
+
+\textbf{Against ImageNet-pretrained networks.} Group B models transfer features learned from photographs of everyday objects to tissue. Alone, they reported AUCs of 0.70 to 0.85, often on several hundred patients, and several gained most from added clinical data \cite{li2022,zeng2024}. Our image-only model reached 0.704 with 89 patients and no network training, because the encoder already represents histology.
+
+\textbf{Against small self-supervised and hybrid encoders.} Group C combined a small ViT, pre-trained on one cancer type in one case \cite{lin2026}, with an ImageNet CNN. Two-branch designs make it hard to know which component carries the signal. We used a single larger encoder pre-trained across cancer types, so the source of the image signal is unambiguous. One study in this group reported near-perfect AUCs (0.994--0.999) \cite{lin2026}, which warrant independent replication.
+
+\textbf{Against foundation models with MIL.} Group D is methodologically closest. All three studies used the UNI family \cite{khan2025,hou2026,zhou2026}, which requires an access request and was pre-trained partly on non-public institutional slides \cite{chen2024}. To our knowledge this is the first evaluation of Phikon for neoadjuvant response. Phikon is downloadable without restriction and pre-trained only on public data, so the image features can be reproduced exactly by any group. Its compact embedding, reduced here to five components, keeps the final model to at most 13 inputs; attention-based MIL fits far more parameters, which is a risk with a cohort of this size.
+
+\subsection{Choice of encoder}
+Phikon scores below newer encoders on public tissue-classification benchmarks. On three breast benchmarks (BACH, BRACS, BreaKHis) its mean balanced accuracy is 0.679, against 0.813 for UNI-2 and 0.795 for Midnight-12k \cite{karasikov2025}. None of these benchmarks measures response to therapy, so the size of any gain for this task is unknown. That Phikon nonetheless captured response-related signal suggests the finding reflects the tissue rather than encoder strength, and stronger encoders may raise performance further. A direct comparison on this cohort is planned.
+
+\subsection{Clinical implications}
+The model uses only material that exists for every patient at diagnosis: one H\&E biopsy slide and routine clinical variables. An estimate of pCR at that point could inform discussions about the expected course of treatment and identify patients likely to need post-surgical escalation, months before surgery confirms it. Any such use requires external and prospective validation first.
+
+\subsection{Limitations}
+\begin{itemize}[nosep]
+  \item The cohort is small ($n = 106$ with a recorded RCB, of whom 89 were used for development) and from a single institution, and no external validation was performed.
+  \item The gain from adding image features to subtype (+0.024) is modest; its 95\% confidence interval ($-0.027$ to $0.077$) includes zero.
+  \item Molecular subtype dominated prediction, as expected, and the incremental value of the slide over a richer clinical model was small (+0.006).
+  \item PCA is unsupervised, so the five retained components were not selected for their relation to response, and response-relevant variation may lie in discarded components.
+  \item Chemotherapy regimens were not uniform, HER2-positive patients also received trastuzumab with the taxane phase, and the binary pCR endpoint discards the gradation captured by the full RCB index.
+  \item Fifty-one patients (32\%) lacked a usable RCB value and were excluded, and exclusion was not random: 28 of 38 HER2-enriched and 18 of 39 luminal B patients were excluded, against fewer than 10 luminal A and fewer than 10 triple-negative patients ($\chi^2$ test, $p < 0.001$). The analysed cohort therefore under-represents HER2-positive disease, with only 10 HER2-enriched and 21 luminal B patients, and may not represent the full dataset. Most of the 51 were recorded as complete responders by the clinical response field; since that field agreed closely with pCR in the analysed cohort, many excluded patients probably had pCR. The pCR rate in the analysed cohort (28.3\%) is therefore likely lower than in the full dataset, the model was trained mostly on non-pCR cases in HER2-positive disease, and discrimination may differ in a cohort that includes these patients.
+  \item pCR events were concentrated in triple-negative disease (most of the pCR events), so subtype separates the classes strongly and the contribution of image features is difficult to distinguish from it.
+  \item Phikon is not the strongest available encoder on public benchmarks.
+\end{itemize}
+
+\subsection{Future work}
+The next steps are validation in an external cohort, confidence intervals and paired tests for the image contribution, a direct comparison with UNI-2 and Midnight-12k using the same pipeline, and prediction of the full RCB class.
+
+%------------------------------------------------------------------
+\section{Conclusion}
+An openly available pathology foundation model, used frozen on routine pre-treatment biopsies with no manual annotation, predicted pathological complete response to neoadjuvant chemotherapy and added to molecular subtype (AUC 0.882). The pipeline is compact enough for single-centre cohorts and reproducible from public weights. Validation in independent cohorts is the next step.
+
+\section*{Declarations}
+\begin{itemize}[nosep]
+  \item \textbf{Ethics approval:} The source data were collected under research ethics board approval REB\# 270-2018, as reported in the dataset documentation \cite{tran2025}. This secondary analysis used the dataset under the T-CAIREM Data Use Agreement, for biomedical research only, and did not attempt to identify any individual or institution. No additional ethics review was required for this secondary analysis.
+  \item \textbf{Data availability:} The T-CAIREM dataset (version 1.0.0, DOI 10.57764/pm3v-b131) is available to credentialed users through Health Data Nexus, which requires TCPS 2: CORE 2022 training and a signed data use agreement; the data cannot be redistributed. Phikon weights are publicly available at huggingface.co/owkin/phikon.
+  \item \textbf{Code availability:} The analysis code has not been deposited in a public repository.
+  \item \textbf{Funding:} This work received no specific funding.
+  \item \textbf{Competing interests:} The authors declare no competing interests.
+  \item \textbf{Acknowledgements:} The authors thank the organisers of T-CAIREM's 2026 National Health Datathon and the investigators who curated the dataset. Pipeline figure acquisition image: T-CAIREM, Matt Bielecki.
+\end{itemize}
+
+%------------------------------------------------------------------
+\begin{thebibliography}{99}
+\footnotesize\raggedright\setlength{\itemsep}{0pt}
+
+\bibitem{yau2022} Yau C, Osdoit M, van der Noordaa M, et al. Residual cancer burden after neoadjuvant chemotherapy and long-term survival outcomes in breast cancer: a multicentre pooled analysis of 5161 patients. Lancet Oncol. 2022. doi:10.1016/S1470-2045(21)00589-1
+
+\bibitem{conforti2021} Conforti F, Pala L, Sala I, et al. Evaluation of pathological complete response as surrogate endpoint in neoadjuvant randomised clinical trials of early stage breast cancer: systematic review and meta-analysis. BMJ. 2021. doi:10.1136/bmj-2021-066381
+
+\bibitem{vonminckwitz2019} von Minckwitz G, Huang CS, Mano MS, et al. Trastuzumab emtansine for residual invasive HER2-positive breast cancer. N Engl J Med. 2019;380(7):617--28. doi:10.1056/NEJMoa1814017
+
+\bibitem{masuda2017} Masuda N, Lee SJ, Ohtani S, et al. Adjuvant capecitabine for breast cancer after preoperative chemotherapy. N Engl J Med. 2017;376(22):2147--59. doi:10.1056/NEJMoa1612645
+
+\bibitem{li2022til} Li S, Zhang Y, Zhang P, et al. Predictive and prognostic values of tumor infiltrating lymphocytes in breast cancers treated with neoadjuvant chemotherapy: a meta-analysis. Breast. 2022. doi:10.1016/j.breast.2022.10.001
+
+\bibitem{hagenaars2021} Hagenaars SC, de Groot S, Cohen D, et al. Tumor-stroma ratio is associated with Miller-Payne score and pathological response to neoadjuvant chemotherapy in HER2-negative early breast cancer. Int J Cancer. 2021. doi:10.1002/ijc.33700
+
+\bibitem{tao2017} Tao M, Chen S, Zhang X, Zhou Q. Ki-67 labeling index is a predictive marker for a pathological complete response to neoadjuvant chemotherapy in breast cancer: a meta-analysis. Medicine. 2017. doi:10.1097/MD.0000000000009384
+
+\bibitem{krasniqi2025} Krasniqi E, Filomeno L, Arcuri T, et al. Multimodal deep learning for predicting neoadjuvant treatment outcomes in breast cancer: a systematic review. Biol Direct. 2025. doi:10.1186/s13062-025-00661-8
+
+\bibitem{carlini2026} Carlini A, Foca F, Sirico M, et al. Artificial intelligence for predicting pathological complete response to neoadjuvant therapy in triple-negative breast cancer: a systematic review and meta-analysis. Breast. 2026. doi:10.1016/j.breast.2026.104861
+
+\bibitem{dodington2021} Dodington DW, Lagree A, Tabbarah S, et al. Analysis of tumor nuclear features using artificial intelligence to predict response to neoadjuvant chemotherapy in high-risk breast cancer patients. Breast Cancer Res Treat. 2021. doi:10.1007/s10549-020-06093-4
+
+\bibitem{saednia2022} Saednia K, Lagree A, Alera MA, et al. Quantitative digital histopathology and machine learning to predict pathological complete response to chemotherapy in breast cancer patients using pre-treatment tumor biopsies. Sci Rep. 2022. doi:10.1038/s41598-022-13917-4
+
+\bibitem{huang2023} Huang Z, Shao W, Han Z, et al. Artificial intelligence reveals features associated with breast cancer neoadjuvant chemotherapy responses from multi-stain histopathologic images. NPJ Precis Oncol. 2023. doi:10.1038/s41698-023-00352-5
+
+\bibitem{aswolinskiy2023} Aswolinskiy W, Munari E, Horlings HM, et al. PROACTING: predicting pathological complete response to neoadjuvant chemotherapy in breast cancer from routine diagnostic histopathology biopsies with deep learning. Breast Cancer Res. 2023;25:142. doi:10.1186/s13058-023-01726-0
+
+\bibitem{cui2026} Cui W, Tan T, Fan M, Li L. Hierarchical tissue-specific modeling of pathology images predicts response in HER2+ breast cancer. Cyborg Bionic Syst. 2026. doi:10.34133/cbsystems.0554
+
+\bibitem{li2021} Li F, Yang Y, Wei Y, et al. Deep learning-based predictive biomarker of pathological complete response to neoadjuvant chemotherapy from histological images in breast cancer. J Transl Med. 2021. doi:10.1186/s12967-021-03020-z
+
+\bibitem{li2022} Li B, Li F, Liu Z, et al. Deep learning with biopsy whole slide images for pretreatment prediction of pathological complete response to neoadjuvant chemotherapy in breast cancer: a multicenter study. Breast. 2022. doi:10.1016/j.breast.2022.10.004
+
+\bibitem{zeng2024} Zeng H, Qiu S, Zhuang S, et al. Deep learning-based predictive model for pathological complete response to neoadjuvant chemotherapy in breast cancer from biopsy pathological images: a multicenter study. Front Physiol. 2024;15:1279982. doi:10.3389/fphys.2024.1279982
+
+\bibitem{sturm2025} Sturm B, Lock P, Kumar D, et al. Deep learning predicts the effect of neoadjuvant chemotherapy for patients with triple negative breast cancer. J Pathol Inform. 2025. doi:10.1016/j.jpi.2025.100448
+
+\bibitem{valderrama2026} Valderrama NF, Morel LO, Mweze DT, et al. Chemo-prAIdict Breast: a deep learning solution for predicting residual disease on biopsies of breast cancer. Eur J Cancer. 2026. doi:10.1016/j.ejca.2026.116222
+
+\bibitem{lin2026} Lin R, He Z, Han J, et al. A foundation model for predicting outcomes of neoadjuvant chemotherapy in breast cancer. Int J Surg. 2026. doi:10.1097/JS9.0000000000003999. PMID 41231625
+
+\bibitem{khan2025} Khan H, Su Z, Zhang H, et al. Predicting neoadjuvant chemotherapy response in triple-negative breast cancer using pre-treatment histopathologic images. Cancers. 2025;17(15):2423. doi:10.3390/cancers17152423
+
+\bibitem{hou2026} Hou WT, Pu ZF, Xu ZY, et al. Predicting neoadjuvant therapy response in breast cancer from preoperative biopsy via spatial-semantic-differential learning and interpretable clinicopathological-guided fusion. Med Image Anal. 2026. doi:10.1016/j.media.2026.104069
+
+\bibitem{zhou2026} Zhou Y, Shu X, Wang F, et al. Prediction of neoadjuvant therapy response in breast cancer based on interpretable artificial intelligence. Int J Surg. 2026. doi:10.1097/JS9.0000000000003326
+
+\bibitem{filiot2023} Filiot A, et al. Scaling self-supervised learning for histopathology with masked image modeling. medRxiv. 2023. doi:10.1101/2023.07.21.23292757
+
+\bibitem{chen2024} Chen RJ, Ding T, Lu MY, et al. Towards a general-purpose foundation model for computational pathology. Nat Med. 2024;30(3):850--62. doi:10.1038/s41591-024-02857-3
+
+\bibitem{karasikov2025} Karasikov M, van Doorn J, K{\"a}nzig N, et al. Training state-of-the-art pathology foundation models with orders of magnitude less data. MICCAI 2025. LNCS 15967:573--83. doi:10.48550/arXiv.2504.05186
+
+\bibitem{lundberg2017} Lundberg SM, Lee SI. A unified approach to interpreting model predictions. Advances in Neural Information Processing Systems 30. 2017:4765--74.
+
+\bibitem{collins2024} Collins GS, Moons KGM, Dhiman P, et al. TRIPOD+AI statement: updated guidance for reporting clinical prediction models that use regression or machine learning methods. BMJ. 2024;385:e078378. doi:10.1136/bmj-2023-078378
+
+\bibitem{tran2025} Tran W, Lu F-I, Jerzak K. High-Resolution Digital Pathology Imaging of Breast Cancer (version 1.0.0). Health Data Nexus. 2025. doi:10.57764/pm3v-b131
+
+\bibitem{tran2026keynote} Tran W. Keynote address. T-CAIREM's 2026 National Health Datathon, University of Toronto. 2026.
+
+\end{thebibliography}
+
+
+\clearpage
+\onecolumn
+\section*{Supplementary Table S1: TRIPOD+AI checklist}
+\vspace{-4pt}
+\small
+\renewcommand{\arraystretch}{0.95}
+\setlength{\tabcolsep}{4pt}
+\setlength{\LTleft}{0pt}\setlength{\LTright}{0pt}
+\begin{longtable}{@{}l p{0.30\textwidth} p{0.26\textwidth} p{0.34\textwidth}@{}}
+\toprule
+Item & Topic & Where reported & Status \\
+\midrule
+\endhead
+1 & Title & Title; Abstract & Partly: names outcome and data type, not the study type \\
+2 & Abstract & Abstract & Reported (structured; no registration number) \\
+3a & Background and rationale & Introduction & Reported \\
+3b & Intended purpose and users & Introduction; Clinical implications & Partly \\
+3c & Known health inequalities & -- & Not reported \\
+4 & Objectives & Introduction & Reported \\
+5a & Data sources & Study population & Reported \\
+5b & Dates of data collection & Study population & Reported \\
+6a & Setting and centres & Study population & Reported (single centre) \\
+6b & Eligibility criteria & Study population & Reported \\
+6c & Treatments received & Clinical variables & Reported \\
+7 & Preprocessing and quality checks & Slide processing and feature extraction & Reported; similarity across sociodemographic groups not assessed \\
+8a & Outcome definition & Outcome & Reported \\
+8b & Outcome assessors & -- & Not reported (RCB taken from the dataset) \\
+8c & Blinding of outcome assessment & -- & Not reported \\
+9a & Choice of predictors & Clinical variables; Leakage prevention & Reported \\
+9b & Predictor definitions and timing & Clinical variables & Reported \\
+9c & Predictor assessors & -- & Not reported \\
+10 & Sample size & Limitations & No calculation; size fixed by the dataset \\
+11 & Missing data & Study population; Clinical variables & Reported (exclusions; imputation) \\
+12a & Data partition & Evaluation & Reported \\
+12b & Predictor handling & Clinical variables; Model development & Reported \\
+12c & Model type, tuning, internal validation & Model development; Evaluation & Reported \\
+12d & Heterogeneity across clusters & -- & Not applicable (single centre) \\
+12e & Performance measures & Evaluation & Reported (discrimination only; no calibration) \\
+12f & Model updating & -- & Not applicable \\
+12g & Generating predictions & Declarations (code availability) & Code not publicly available \\
+13 & Class imbalance & -- & No method applied; add a statement \\
+14 & Fairness & Limitations & Not assessed \\
+15 & Model output and thresholds & Evaluation & Probability of RCB 0; no threshold used \\
+16 & Development versus evaluation differences & -- & Not applicable (internal validation only) \\
+17 & Ethics approval and consent & Declarations & Reported (no further review needed) \\
+18a & Funding & Declarations & Reported (no specific funding) \\
+18b & Conflicts of interest & Declarations & Reported (none) \\
+18c & Protocol & -- & None prepared; add a statement \\
+18d & Registration & -- & Not registered; add a statement \\
+18e & Data sharing & Study population & Credentialed access under a data use agreement \\
+18f & Code sharing & Declarations (code availability) & Not publicly shared \\
+19 & Patient and public involvement & -- & None; add a statement \\
+20a & Participant flow & Cohort (patient flow figure) & Reported \\
+20b & Participant characteristics & Cohort (Table 1) & Reported \\
+20c & Evaluation versus development data & -- & Not applicable \\
+21 & Participants and events per analysis & Cohort; Model performance & Reported \\
+22 & Full model specification & Model development; Declarations & Partly (code not public) \\
+23a & Performance with confidence intervals & Model performance (Table 2) & Reported (no subgroup results) \\
+23b & Heterogeneity in performance & -- & Not applicable \\
+24 & Model updating results & -- & Not applicable \\
+25 & Interpretation & Principal findings & Reported (fairness not addressed) \\
+26 & Limitations & Limitations & Reported \\
+27a & Handling poor-quality input at implementation & -- & Not reported \\
+27b & User interaction and expertise & Clinical implications & Partly \\
+27c & Next steps & Future work & Reported \\
+\bottomrule
+\end{longtable}
+\end{document}
